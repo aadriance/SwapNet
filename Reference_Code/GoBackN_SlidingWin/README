@@ -1,0 +1,9 @@
+Spencer Chang 9am
+
+Notes:
+Two flags were left as "NO_FLAG" or "EMPTY" since they are not
+used according to the spec.
+Additional Flags - 
+   8 - File OK 
+   9 - File BAD
+  10 - EOF
