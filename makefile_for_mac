@@ -6,4 +6,5 @@ SwapNet.o: SwapNet.c
 
 clean:
 	rm *.o
-	rm *.so
+	rm *.sormexit
+    
