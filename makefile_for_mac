@@ -2,9 +2,8 @@ lib: SwapNet.o
 	gcc-7 -shared -o libSwapNet.so SwapNet.o -ldl
 
 SwapNet.o: SwapNet.c
-	gcc-7 -c -Wall -Werror -fpic SwapNet.c
+	gcc-7 -c -Wall -Werror -fpic SwapNet.c -ldl
 
 clean:
 	rm *.o
 	rm *.sormexit
-    
