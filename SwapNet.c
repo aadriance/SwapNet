@@ -6,8 +6,8 @@
 
 //libc wrappers for sys/sockets.h
 int  libc_accept(int socket, struct sockaddr *address, socklen_t *address_len) {
-    int (*lib_accpet)(int, struct sockaddr*, socklen_t*) = (int (*)(int, struct sockaddr*, socklen_t*))dlsym(RTLD_NEXT, "accept");
-    return lib_accpet(socket, address, address_len);
+    int (*lib_accept)(int, struct sockaddr*, socklen_t*) = (int (*)(int, struct sockaddr*, socklen_t*))dlsym(RTLD_NEXT, "accept");
+    return lib_accept(socket, address, address_len);
 }
 int libc_bind(int socket, const struct sockaddr *address, socklen_t address_len) {
     int (*lib_bind)(int, const struct sockaddr *, socklen_t) = (int (*)(int, const struct sockaddr *, socklen_t))dlsym(RTLD_NEXT, "bind");
