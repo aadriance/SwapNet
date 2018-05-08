@@ -45,6 +45,10 @@ int libc_shutdown(int socket, int how) {
 int  accept(int socket, struct sockaddr *address, socklen_t *address_len) {
     printf("Intercepted accept\n");
     //Establishes server connection to client
+    //Server will:
+    //  -recvfrom client the connect packet
+    //  -set up sliding window
+    //  -send an ACK to client
     return libc_accept(socket, address, address_len);
 }
 int bind(int socket, const struct sockaddr *address, socklen_t address_len) {
@@ -55,6 +59,11 @@ int bind(int socket, const struct sockaddr *address, socklen_t address_len) {
 int connect(int socket, const struct sockaddr *address, socklen_t address_len) {
     printf("Intercepted connect\n");
     //Establish client connection to server
+    //packet will contain:
+    //  -window size
+    //client does:
+    //  -send setup packet
+    //  -set up own sliding window
     return libc_connect(socket, address, address_len);
 }
 int getsockopt(int socket, int level, int option_name, void *option_value, socklen_t *option_len) {
@@ -70,20 +79,34 @@ int setsockopt(int socket, int level, int option_name, const void *option_value,
 int listen(int socket, int backlog) {
     printf("Intercepted listen\n");
     //server opens port and waits for cleint to connect, then server will accept
+    //server will:
+    //  -open UDP port
     return libc_listen(socket, backlog);
 }
 ssize_t send(int socket, const void *message, size_t length, int flags) {
     printf("Intercepted send\n");
     //do our sliding window, and secretly call sendmsg
+    //sender:
+    //  -sends packet
+    //  -updates sliding window
+    //      -if window has space, keep sending
+    //      -if window full, pause, wait for RR, if timeout, reset window
+    //  -check for RRs
+    //  -if send works, reset window for next send
     return libc_send(socket, message, length, flags);
 }
 ssize_t recv(int socket, void *buffer, size_t length, int flags) {
     printf("Intercepted recv\n");
     //get data, send RRs, use recvmsg
+    //recving:
+    //  while there is data:
+    //      -wait for a packet
+    //      -get packet, validate
+    //      -send RR  or REJ
     return libc_recv(socket, buffer, length, flags);
 }
 int     shutdown(int socket, int how) {
     printf("Intercepted shutdown\n");
-    //close connection.  Clean up connection state data.
+    //close connection.  Clean up connection state data.  Un allocate sliding windows, etc.
     return libc_shutdown(socket, how);
 }
