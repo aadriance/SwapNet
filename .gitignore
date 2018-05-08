@@ -2,3 +2,4 @@
 *.o
 example
 libSwapNet.so
+.DS_Store
