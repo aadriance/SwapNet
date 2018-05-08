@@ -44,37 +44,46 @@ int libc_shutdown(int socket, int how) {
 
 int  accept(int socket, struct sockaddr *address, socklen_t *address_len) {
     printf("Intercepted accept\n");
+    //Establishes server connection to client
     return libc_accept(socket, address, address_len);
 }
 int bind(int socket, const struct sockaddr *address, socklen_t address_len) {
     printf("Intercepted bind\n");
+    //will not change for goBackN
     return libc_bind(socket, address, address_len);
 }
 int connect(int socket, const struct sockaddr *address, socklen_t address_len) {
     printf("Intercepted connect\n");
+    //Establish client connection to server
     return libc_connect(socket, address, address_len);
 }
 int getsockopt(int socket, int level, int option_name, void *option_value, socklen_t *option_len) {
     printf("Intercepted getsockopt\n");
+    //won't change
     return libc_getsockopt(socket, level, option_name, option_value, option_len);
 }
 int setsockopt(int socket, int level, int option_name, const void *option_value, socklen_t option_len) {
     printf("Intercepted setsocketopt\n");
+    //won't change
     return libc_setsockopt(socket, level, option_name, option_value, option_len);
 }
 int listen(int socket, int backlog) {
     printf("Intercepted listen\n");
+    //server opens port and waits for cleint to connect, then server will accept
     return libc_listen(socket, backlog);
 }
 ssize_t send(int socket, const void *message, size_t length, int flags) {
     printf("Intercepted send\n");
+    //do our sliding window, and secretly call sendmsg
     return libc_send(socket, message, length, flags);
 }
 ssize_t recv(int socket, void *buffer, size_t length, int flags) {
     printf("Intercepted recv\n");
+    //get data, send RRs, use recvmsg
     return libc_recv(socket, buffer, length, flags);
 }
 int     shutdown(int socket, int how) {
     printf("Intercepted shutdown\n");
+    //close connection.  Clean up connection state data.
     return libc_shutdown(socket, how);
 }
