@@ -45,6 +45,7 @@ int libc_shutdown(int socket, int how) {
 int  accept(int socket, struct sockaddr *address, socklen_t *address_len) {
     printf("Intercepted accept\n");
     //Establishes server connection to client
+    //call setup_ack()
     //Server will:
     //  -recvfrom client the connect packet
     //  -set up sliding window
@@ -59,6 +60,7 @@ int bind(int socket, const struct sockaddr *address, socklen_t address_len) {
 int connect(int socket, const struct sockaddr *address, socklen_t address_len) {
     printf("Intercepted connect\n");
     //Establish client connection to server
+    //call call_setup()
     //packet will contain:
     //  -window size
     //client does:
@@ -79,6 +81,7 @@ int setsockopt(int socket, int level, int option_name, const void *option_value,
 int listen(int socket, int backlog) {
     printf("Intercepted listen\n");
     //server opens port and waits for cleint to connect, then server will accept
+    //call start_state()
     //server will:
     //  -open UDP port
     return libc_listen(socket, backlog);
@@ -86,6 +89,7 @@ int listen(int socket, int backlog) {
 ssize_t send(int socket, const void *message, size_t length, int flags) {
     printf("Intercepted send\n");
     //do our sliding window, and secretly call sendmsg
+    //server state machine
     //sender:
     //  -sends packet
     //  -updates sliding window
@@ -98,6 +102,7 @@ ssize_t send(int socket, const void *message, size_t length, int flags) {
 ssize_t recv(int socket, void *buffer, size_t length, int flags) {
     printf("Intercepted recv\n");
     //get data, send RRs, use recvmsg
+    //the rcpoy state machine
     //recving:
     //  while there is data:
     //      -wait for a packet
