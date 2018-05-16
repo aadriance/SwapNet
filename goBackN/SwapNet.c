@@ -1,8 +1,27 @@
 #define _GNU_SOURCE     /* for RTLD_NEXT */
-#include <sys/socket.h>
 #include <dlfcn.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <errno.h>
+#include <string.h>
+#include <netdb.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 
+#include <arpa/inet.h>
+
+#include <stdarg.h>
+#include <getopt.h>
+
+#include <fcntl.h>
+
+#include <assert.h>
+#include <sys/select.h>
+#include <sys/uio.h>
+#include <strings.h>
+#include <sys/stat.h>
 
 //libc wrappers for sys/sockets.h
 int  libc_accept(int socket, struct sockaddr *address, socklen_t *address_len) {
@@ -41,6 +60,117 @@ int libc_shutdown(int socket, int how) {
     int (*lib_shutdown)(int, int) = (int (*)(int, int))dlsym(RTLD_NEXT, "shutdown");
     return lib_shutdown(socket, how);
 }
+int libc_socket(int domain, int type, int protocol) {
+    int (*lib_socket)(int, int, int) = (int (*)(int, int, int))dlsym(RTLD_NEXT, "socket");
+    return lib_socket(domain, type, protocol);
+}
+
+//START STOP AND WAIT CODE
+
+#define HEADER_SIZE 8
+#define PACKET_SIZE 512
+#define PAYLOAD_SIZE (PACKET_SIZE-HEADER_SIZE)
+#define RETRY 10
+
+typedef struct struct_socket_data {
+    int socket;
+    int addrLen;
+    struct sockaddr *address;
+} socket_data;
+
+typedef struct struct_socket_list {
+    socket_data *data;
+    struct struct_socket_list *next;
+}socket_list_node;
+
+enum Packet_Type
+{
+   ACK, FIN, DATA
+};
+
+typedef struct struct_packet {
+        u_short seq;
+        u_short packetType;
+        u_short size;
+        u_char payload[PAYLOAD_SIZE];
+} packet;
+
+
+socket_list_node *socketList = NULL;
+socket_list_node *socketListTail = NULL;
+
+socket_data *getDataForSocket(int socket) {
+    socket_list_node *res_node = socketList;
+    //link list search
+    while(res_node != NULL && res_node->data->socket != socket) {
+        res_node = res_node->next;
+    }
+    if(res_node == NULL) {
+        return NULL;
+    } else {
+        return res_node->data;
+    }
+}
+
+int removeConnection(int socket) {
+    socket_list_node *res_node = socketList;
+    socket_list_node *prev_node = NULL;
+    while(res_node != NULL && res_node->data->socket != socket) {
+        prev_node = res_node;
+        res_node = res_node->next;
+    }
+    //standard linked list removal
+    if(res_node != NULL) {
+        if (prev_node == NULL) {
+            socketList = socketList->next;
+        } else if(res_node == socketListTail) {
+            socketListTail = prev_node;
+            socketListTail->next = NULL;
+        } else {
+            prev_node->next = res_node->next;
+        }
+        free(res_node->data);
+        free(res_node);
+    }
+    return 0;
+}
+
+int registerConnection(int socket, struct sockaddr *address, socklen_t *address_len) {
+    socket_list_node *new_node = malloc(sizeof(socket_list_node));
+    socket_data *data = malloc(sizeof(socket_data));
+    //return failure if mallocs failed
+    if (new_node <= 0 || data <= 0) {
+        return -1;
+    }
+    //init data
+    data->socket = socket;
+    data->address = address;
+    data->addrLen = address_len;
+    new_node->data = data;
+    new_node->next = NULL;
+    //link list add
+    if(socketList == NULL){
+        socketList = new_node;
+        socketListTail = new_node;
+    } else {
+        socketListTail->next = new_node;
+        socketListTail = new_node;
+    }
+
+    return socket;
+}
+
+//END STOP AND WAIT CODE
+
+
+//START SOCKET.H OVERRIDES
+
+int socket(int domain, int type, int protocol) {
+    if(type == SOCK_STREAM) {
+        type = SOCK_DGRAM;
+    }
+    return libc_socket(domain, type, protocol);
+}
 
 int  accept(int socket, struct sockaddr *address, socklen_t *address_len) {
     printf("Intercepted accept\n");
@@ -50,7 +180,7 @@ int  accept(int socket, struct sockaddr *address, socklen_t *address_len) {
     //  -recvfrom client the connect packet
     //  -set up sliding window
     //  -send an ACK to client
-    return libc_accept(socket, address, address_len);
+    return registerConnection(socket, address, address_len);
 }
 int bind(int socket, const struct sockaddr *address, socklen_t address_len) {
     printf("Intercepted bind\n");
@@ -66,7 +196,7 @@ int connect(int socket, const struct sockaddr *address, socklen_t address_len) {
     //client does:
     //  -send setup packet
     //  -set up own sliding window
-    return libc_connect(socket, address, address_len);
+    return registerConnection(socket, address, address_len) == -1 ? -1:0;
 }
 int getsockopt(int socket, int level, int option_name, void *option_value, socklen_t *option_len) {
     printf("Intercepted getsockopt\n");
@@ -84,34 +214,42 @@ int listen(int socket, int backlog) {
     //call start_state()
     //server will:
     //  -open UDP port
-    return libc_listen(socket, backlog);
+    // Connected to server before, close and reopen connection
+    // okay actually maybe not, open UDP sockets already do this
+    return 0;
 }
 ssize_t send(int socket, const void *message, size_t length, int flags) {
     printf("Intercepted send\n");
-    //do our sliding window, and secretly call sendmsg
-    //server state machine
     //sender:
-    //  -sends packet
-    //  -updates sliding window
-    //      -if window has space, keep sending
-    //      -if window full, pause, wait for RR, if timeout, reset window
-    //  -check for RRs
-    //  -if send works, reset window for next send
+    //  -While there is data to send:
+    //      - Fill a packet with data and sendto()
+    //      - use select and recvfrom() to timeout
+    //      - if timeout
+    //          - re transmit up to 10(?) times
+    //  - if all data is sent, send fin packet
+    //  - use select and recvfrom() to timeout for fin ack
     return libc_send(socket, message, length, flags);
 }
 ssize_t recv(int socket, void *buffer, size_t length, int flags) {
     printf("Intercepted recv\n");
-    //get data, send RRs, use recvmsg
-    //the rcpoy state machine
     //recving:
-    //  while there is data:
-    //      -wait for a packet
-    //      -get packet, validate
-    //      -send RR  or REJ
+    // - while data < length || packetType != fin
+    //      - recvfrom() to get data, use select() to timeout
+    //      - if no timeout
+    //          - add data to buffer
+    //          - send ack
+    //          - repeat
+    //      - if timeout
+    //          - try again, up to 10(?) times
+    // -if packet if fin
+    //      - send ack
     return libc_recv(socket, buffer, length, flags);
 }
 int     shutdown(int socket, int how) {
     printf("Intercepted shutdown\n");
     //close connection.  Clean up connection state data.  Un allocate sliding windows, etc.
+    removeConnection(socket);
     return libc_shutdown(socket, how);
 }
+
+//END SOCKET.H OVERRIDES
