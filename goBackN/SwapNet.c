@@ -74,7 +74,7 @@ int libc_socket(int domain, int type, int protocol) {
 
 typedef struct struct_socket_data {
     int socket;
-    int addrLen;
+    unsigned int addrLen;
     struct sockaddr *address;
 } socket_data;
 
@@ -200,11 +200,17 @@ int connect(int socket, const struct sockaddr *address, socklen_t address_len) {
 }
 int getsockopt(int socket, int level, int option_name, void *option_value, socklen_t *option_len) {
     printf("Intercepted getsockopt\n");
+    if(level == IPPROTO_TCP) {
+        level = IPPROTO_UDP;
+    }
     //won't change
     return libc_getsockopt(socket, level, option_name, option_value, option_len);
 }
 int setsockopt(int socket, int level, int option_name, const void *option_value, socklen_t option_len) {
     printf("Intercepted setsocketopt\n");
+    if(level == IPPROTO_TCP) {
+        level = IPPROTO_UDP;
+    }
     //won't change
     return libc_setsockopt(socket, level, option_name, option_value, option_len);
 }
@@ -251,21 +257,23 @@ ssize_t send(int socket, const void *message, size_t length, int flags) {
             fd_set rfds;
             struct timeval tv;
             int retval;
+            FD_ZERO(&rfds);
+            FD_SET(socket, &rfds);
             //sendto
-            sendto(socket, &sendPacket, size(sendPacket), 0,
+            sendto(socket, &sendPacket, sizeof(sendPacket), 0,
                 socketInfo->address, socketInfo->addrLen);
             /* Wait up to five seconds. */
             tv.tv_sec = 0;
             tv.tv_usec = 500 * 1000;
             //timeout waiting for data
-            retval = select(socket + 1, &socket, NULL, NULL, &tv);
+            retval = select(socket + 1, &rfds, NULL, NULL, &tv);
             if (retval == -1) {
                 perror("select()");
             }
             else if (retval) {
                 packet ackPacket;
-                recvfrom(socket, &ackPacket, size(ackPacket),
-                    0, socketInfo->address, socketInfo->addrLen);
+                recvfrom(socket, &ackPacket, sizeof(ackPacket),
+                    0, socketInfo->address, &(socketInfo->addrLen));
                 if(ackPacket.packetType == ACK) {
                     break;
                 }
@@ -282,7 +290,7 @@ ssize_t send(int socket, const void *message, size_t length, int flags) {
         messageLoc += packetSize;
         toSend -= packetSize;
     }
-    return libc_send(socket, message, length, flags);
+    return length - toSend;
 }
 ssize_t recv(int socket, void *buffer, size_t length, int flags) {
     printf("Intercepted recv\n");
@@ -298,7 +306,63 @@ ssize_t recv(int socket, void *buffer, size_t length, int flags) {
     // -if packet if fin
     //      - send ack
     socket_data *socketInfo = getDataForSocket(socket);
-    return libc_recv(socket, buffer, length, flags);
+    size_t gatheredAmount = 0;
+    int seq = 0;
+    void *writeLoc = buffer;
+    packet ackPacket;
+    ackPacket.packetType = ACK;
+    ackPacket.size = 0;
+    while(gatheredAmount < length){
+        //attempt 10 times to get data
+        int attempts = 0;
+        while(attempts < 10){
+            fd_set rfds;
+            struct timeval tv;
+            int retval = 1;
+            FD_ZERO(&rfds);
+            FD_SET(socket, &rfds);
+
+            /* Wait up to five seconds. */
+            tv.tv_sec = 0;
+            tv.tv_usec = 600 * 1000;
+            //timeout waiting for data
+            retval = select(socket + 1, &rfds, NULL, NULL, &tv);
+            if (retval == -1) {
+                perror("select()");
+            }
+            else if (retval) {
+                packet recvPacket;
+                recvfrom(socket, &recvPacket, sizeof(recvPacket),
+                    0, socketInfo->address, &(socketInfo->addrLen));
+                if(recvPacket.packetType == FIN) {
+                    //if final packet, return
+                    return gatheredAmount;
+                } else if(recvPacket.packetType == DATA) {
+                    //if data packet check sequence
+                    if(recvPacket.seq == seq){
+                        //copy in data
+                        memcpy(writeLoc, &(recvPacket.payload), recvPacket.size );
+                        gatheredAmount += recvPacket.size;
+                        writeLoc += recvPacket.size;
+                        sendto(socket, &ackPacket, sizeof(ackPacket), 0,
+                         socketInfo->address, socketInfo->addrLen);
+                    } else if(recvPacket.seq == seq) {
+                        //if we got the last paket again, resend ack
+                        sendto(socket, &ackPacket, sizeof(ackPacket), 0,
+                            socketInfo->address, socketInfo->addrLen);
+                    }
+
+                }
+            }
+            attempts++;
+        }
+        //Nevet got a data
+        if(attempts >= 9) {
+            return -1;
+        }
+        seq++;
+    }
+    return gatheredAmount;
 }
 int     shutdown(int socket, int how) {
     printf("Intercepted shutdown\n");
