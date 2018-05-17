@@ -135,7 +135,7 @@ int removeConnection(int socket) {
     return 0;
 }
 
-int registerConnection(int socket, struct sockaddr *address, socklen_t *address_len) {
+int registerConnection(int socket, struct sockaddr *address, socklen_t address_len) {
     socket_list_node *new_node = malloc(sizeof(socket_list_node));
     socket_data *data = malloc(sizeof(socket_data));
     //return failure if mallocs failed
@@ -180,7 +180,7 @@ int  accept(int socket, struct sockaddr *address, socklen_t *address_len) {
     //  -recvfrom client the connect packet
     //  -set up sliding window
     //  -send an ACK to client
-    return registerConnection(socket, address, address_len);
+    return registerConnection(socket, address, *address_len);
 }
 int bind(int socket, const struct sockaddr *address, socklen_t address_len) {
     printf("Intercepted bind\n");
@@ -228,6 +228,60 @@ ssize_t send(int socket, const void *message, size_t length, int flags) {
     //          - re transmit up to 10(?) times
     //  - if all data is sent, send fin packet
     //  - use select and recvfrom() to timeout for fin ack
+    socket_data *socketInfo = getDataForSocket(socket);
+    size_t toSend = length;
+    packet sendPacket;
+    int seq = 0;
+    void *messageLoc = message;
+    while(toSend > 0) {
+        //figure out how much we are goign to send
+        size_t packetSize = toSend;
+        if(toSend > PACKET_SIZE) {
+            packetSize = PAYLOAD_SIZE;
+        }
+
+        //fill packet with data
+        sendPacket.packetType = DATA;
+        sendPacket.size = packetSize;
+        sendPacket.seq = seq;
+        memcpy(&(sendPacket.payload), messageLoc, packetSize );
+
+        int attempts = 0;
+        while(attempts < 10){
+            fd_set rfds;
+            struct timeval tv;
+            int retval;
+            //sendto
+            sendto(socket, &sendPacket, size(sendPacket), 0,
+                socketInfo->address, socketInfo->addrLen);
+            /* Wait up to five seconds. */
+            tv.tv_sec = 0;
+            tv.tv_usec = 500 * 1000;
+            //timeout waiting for data
+            retval = select(socket + 1, &socket, NULL, NULL, &tv);
+            if (retval == -1) {
+                perror("select()");
+            }
+            else if (retval) {
+                packet ackPacket;
+                recvfrom(socket, &ackPacket, size(ackPacket),
+                    0, socketInfo->address, socketInfo->addrLen);
+                if(ackPacket.packetType == ACK) {
+                    break;
+                }
+            }
+            attempts++;
+        }
+        //Nevet got an ACK
+        if(attempts >= 9) {
+            return -1;
+        }
+
+        //update loop parameters
+        seq++;
+        messageLoc += packetSize;
+        toSend -= packetSize;
+    }
     return libc_send(socket, message, length, flags);
 }
 ssize_t recv(int socket, void *buffer, size_t length, int flags) {
@@ -243,6 +297,7 @@ ssize_t recv(int socket, void *buffer, size_t length, int flags) {
     //          - try again, up to 10(?) times
     // -if packet if fin
     //      - send ack
+    socket_data *socketInfo = getDataForSocket(socket);
     return libc_recv(socket, buffer, length, flags);
 }
 int     shutdown(int socket, int how) {
