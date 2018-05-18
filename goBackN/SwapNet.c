@@ -180,6 +180,10 @@ int  accept(int socket, struct sockaddr *address, socklen_t *address_len) {
     //  -recvfrom client the connect packet
     //  -set up sliding window
     //  -send an ACK to client
+    packet getPacket, ackPacket;
+    ackPacket.packetType = ACK;
+    recvfrom(socket, &getPacket, sizeof(getPacket), 0, address, address_len);
+    sendto(socket, &ackPacket, sizeof(ackPacket), 0, address, *address_len);
     return registerConnection(socket, address, *address_len);
 }
 int bind(int socket, const struct sockaddr *address, socklen_t address_len) {
@@ -196,7 +200,15 @@ int connect(int socket, const struct sockaddr *address, socklen_t address_len) {
     //client does:
     //  -send setup packet
     //  -set up own sliding window
-    return registerConnection(socket, address, address_len) == -1 ? -1:0;
+    packet sendPacket, ackPacket;
+    sendPacket.packetType = DATA;
+    struct sockaddr *addr = address;
+    sendto(socket, &sendPacket, sizeof(sendPacket), 0, addr, address_len);
+    recvfrom(socket, &ackPacket, sizeof(ackPacket), 0, NULL, NULL);
+    if(ackPacket.packetType == ACK) {
+        return registerConnection(socket, address, address_len) == -1 ? -1:0;;
+    }
+    return -1;
 }
 int getsockopt(int socket, int level, int option_name, void *option_value, socklen_t *option_len) {
     printf("Intercepted getsockopt\n");
@@ -273,7 +285,7 @@ ssize_t send(int socket, const void *message, size_t length, int flags) {
             else if (retval) {
                 packet ackPacket;
                 recvfrom(socket, &ackPacket, sizeof(ackPacket),
-                    0, socketInfo->address, &(socketInfo->addrLen));
+                    0, NULL, NULL);
                 if(ackPacket.packetType == ACK) {
                     break;
                 }
@@ -333,7 +345,7 @@ ssize_t recv(int socket, void *buffer, size_t length, int flags) {
             else if (retval) {
                 packet recvPacket;
                 recvfrom(socket, &recvPacket, sizeof(recvPacket),
-                    0, socketInfo->address, &(socketInfo->addrLen));
+                    0, NULL, NULL);
                 if(recvPacket.packetType == FIN) {
                     //if final packet, return
                     return gatheredAmount;
